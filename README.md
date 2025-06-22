@@ -1,4 +1,3 @@
-src code released so yall can learn from it 🙏  
 this is a proof of concept that rare biomes can occur faster if the player rejons the moment a common biome starts  
 
 how to run:  
