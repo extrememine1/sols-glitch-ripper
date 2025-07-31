@@ -1,3 +1,5 @@
+# glitch ripper
+
 import os
 import asyncio
 import threading
@@ -25,7 +27,8 @@ template = {
         'GLITCHED': 0,
         'DREAMSPACE': 0,
     },
-    'Rare Biome Sound': 'sounds/realglitchnotif.mp3'
+    'Rare Biome Sound': 'sounds/realglitchnotif.mp3',
+    'PresetData': 'https://raw.githubusercontent.com/extrememine1/presetdata/refs/heads/main/fixedData.json',
 }
 
 mixer.init()
@@ -55,18 +58,21 @@ saveConfig()
 # class ----------------------------------------------------
 class LogSniper:
     # main methods
-    def __init__(self, webhooks, pslink):
+    def __init__(self, data):
         self.path = os.path.join(os.getenv('LOCALAPPDATA'), 'Roblox', 'logs')
-        
-        self.webhooks = webhooks
-        self.pslink = pslink
 
-        with open('data.json', 'r') as f:
-            self.data = json.load(f)
+        self.webhooks = data['Webhooks'].values
+        self.pslink = data['Server']
+
+        self.data = requests.get(data['PresetData'])
 
         # temp vars
         self.last_biome = None
         self.active = True
+
+        self.blacklisted_files = []
+
+        self.prev_file = None
 
     def event(self, coro):
         self.events[coro.__name__] = coro
@@ -81,7 +87,7 @@ class LogSniper:
     def convert_roblox_link(self): # credits to dan and yeswe
         url = self.pslink
         match_game = re.match(game_pattern, url)
-        
+
         if match_game:
             place_id = match_game.group(1)
             link_code = match_game.group(2)
@@ -89,7 +95,7 @@ class LogSniper:
                 return None
             link_code = ''.join(filter(str.isdigit, link_code))
             return f"roblox://placeID={place_id}&linkCode={link_code}"
-        
+
         match_share = re.match(share_pattern, url)
         if match_share:
             code = match_share.group(1)
@@ -102,6 +108,11 @@ class LogSniper:
         return None
 
     def read_logfile(self, filepath):
+        if self.prev_file != filepath:
+            self.last_position = 0
+
+        self.prev_file = self.get_latest_log_file()
+
         if not os.path.exists(filepath):
             print('DEBUG: File not found')
             return []
@@ -109,7 +120,7 @@ class LogSniper:
         with open(filepath, 'r', errors='ignore') as file:
             if hasattr(self, 'last_position'):
                 file.seek(self.last_position)
-                
+
             lines = file.readlines()
             self.last_position = file.tell()
 
@@ -118,7 +129,7 @@ class LogSniper:
     def on_shutdown(self):
         timestamp = int(time.time())
         discord_time = f"<t:{timestamp}:R>"
-        
+
         payload = {
             'embeds': [{
                 'title': f'Macro Ended',
@@ -143,20 +154,20 @@ class LogSniper:
 
         for line in reversed(log_lines):
             for biome in self.data.keys():
-                if biome in line:  
+                if biome in line:
                     await self.biomedetected(biome)
 
-                    populate(biome)
                     return
-    
+
     # async methods
     async def biomedetected(self, biome): # type(str)
         rare_biome = biome in (self.data['glitch_keywords'] + self.data['dream_keywords'])
         valid = False
-        
+        updateCounter = False
+
         payload = {
             'username': 'Macro Notification',
-            'content': '<@everyone>' if rare_biome else ''
+            'content': '@everyone' if rare_biome else ''
         }
 
         embeds = []
@@ -168,8 +179,9 @@ class LogSniper:
         # code goes here
         title = ''
         description = ''
-        
+
         if rare_biome:
+            updateCounter = True
             embed1['title'] = f'# Rare Biome Detected: {biome}'
             embed1['description'] = f'Private Server Link:\n{data["Server"]}'
 
@@ -185,7 +197,7 @@ class LogSniper:
                     'inline': True
                 }
             ]
-            
+
             embed1['fields'] = fields
             self.last_biome = biome
 
@@ -208,6 +220,7 @@ class LogSniper:
             pass
 
         else:
+            updateCounter = True
             embed1['title'] = f'Biome Detected: {biome}'
             embed1['description'] = f'Terminating current instance...'
 
@@ -217,7 +230,7 @@ class LogSniper:
 
         if valid:
             embed1['footer']: {'text': macroName}
-        
+
             embeds.append(embed1)
             payload['embeds'] = embeds
 
@@ -226,14 +239,16 @@ class LogSniper:
                 print(res.status_code)
 
             valid = False
-        
-    # main loop
-    def run(self):
-        asyncio.run(self._run_async())
 
-    async def _run_async(self):
+            populate(biome, updateCounter)
+
+    # main loop
+    async def run(self):
         timestamp = int(time.time())
         discord_time = f"<t:{timestamp}:R>"
+
+        if 'RobloxPlayerBeta.exe' not in [proc.info['name'] for proc in psutil.process_iter(['pid', 'name'])]:
+            self.blacklisted_files.append(self.get_latest_log_file())
 
         payload = {
             'username': 'Macro Bot',
@@ -249,15 +264,20 @@ class LogSniper:
 
         for webhook in self.webhooks:
             requests.post(webhook, json=payload)
-        
+
         while self.active:
             await self.check_biome()
             await asyncio.sleep(1)
 
 # Functions -------------------------------------------------
 def startMacro():
+    global startButton
+
     logger.webhooks = [hook for hook in data['Webhooks'].values()]
     logger.pslink = data['Server']
+
+    startButton['state'] = 'disabled'
+    statusLabel.config(text='Status: Running', bootstyle='success')
 
     def run_logger():
         try:
@@ -267,21 +287,22 @@ def startMacro():
 
     threading.Thread(target=run_logger, daemon=True).start()
 
-def populate(biome):
+def populate(biome, add):
     populates['biomeLabel'].config(text=f'Biome: {biome}')
 
-    if biome in data['Biome Stats']:
-        data['Biome Stats'][biome] += 1
-    elif biome != 'NORMAL':
-        data['Biome Stats'][biome] = 1  # fallback in case biome is missing
+    if add:
+        if biome in data['Biome Stats']:
+            data['Biome Stats'][biome] += 1
+        elif biome != 'NORMAL':
+            data['Biome Stats'][biome] = 1  # fallback in case biome is missing
 
     if biome in populates['biomeLabels']:
         populates['biomeLabels'][biome].config(text=f"{biome}: {data['Biome Stats'][biome]}")
 
     populates['totalNum'].config(text=f'Total Biomes: {sum(data["Biome Stats"].values())}')
-    
+
     saveConfig()
-    
+
 
 # ALL UI -------------------------------------------------------------------------
 # create root
@@ -290,7 +311,7 @@ root = Window(
     title=macroName,
 )
 
-logger = LogSniper(data['Webhooks'].values(), data['Server'])
+logger = LogSniper(data)
 
 def shutdown_handler():
     logger.on_shutdown()
@@ -374,15 +395,12 @@ hookButton.grid(row=0, column=1, padx=5, pady=5, sticky='nsew')
 biomeFrame = Frame(notebook)
 notebook.add(biomeFrame, text='Active Biome')
 
-photoLabel = Label(biomeFrame, text='Picture goes here', width=80)
-photoLabel.grid(row=0, column=0)
-
 biomeLabel = Label(biomeFrame, text=f'Waiting to start...', font=('Arial', 30, 'bold'))
-biomeLabel.grid(row=1, column=0)
+biomeLabel.grid(row=0, column=0)
 populates['biomeLabel'] = biomeLabel
 
 biomecountFrame = Frame(biomeFrame)
-biomecountFrame.grid(row=2, column=0, sticky='nsew')
+biomecountFrame.grid(row=1, column=0, sticky='nsew')
 
 row, column = 0, 0
 populates['biomeLabels'] = {}
@@ -402,7 +420,7 @@ for biome, number in data['Biome Stats'].items():
         row += 1
 
 totalNum = Label(biomeFrame, text=f'Total biomes: {sum(data["Biome Stats"].values())}')
-totalNum.grid(row=3, column=0)
+totalNum.grid(row=2, column=0)
 populates['totalNum'] = totalNum
 
 # start/stop buttons and status --------------------------------
