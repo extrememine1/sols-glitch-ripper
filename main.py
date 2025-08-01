@@ -33,7 +33,7 @@ template = {
 
 mixer.init()
 
-macroName = 'glitch-ripper-v1'
+macroName = 'glitch-ripper-v1.1'
 
 url_pattern = re.compile(r'https?://[^\s]+')
 game_pattern = r"https:\/\/www\.roblox\.com\/games\/(\d+)\/[^?]+\?privateServerLinkCode=(\d+)"
